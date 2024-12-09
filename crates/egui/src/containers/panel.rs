@@ -41,7 +41,7 @@ impl PanelState {
         self.rect.size()
     }
 
-    fn store(self, ctx: &Context, bar_id: Id) {
+    pub fn store(self, ctx: &Context, bar_id: Id) {
         ctx.data_mut(|d| d.insert_persisted(bar_id, self));
     }
 }
@@ -56,21 +56,21 @@ pub enum Side {
 }
 
 impl Side {
-    fn opposite(self) -> Self {
+    pub fn opposite(self) -> Self {
         match self {
             Self::Left => Self::Right,
             Self::Right => Self::Left,
         }
     }
 
-    fn set_rect_width(self, rect: &mut Rect, width: f32) {
+    pub fn set_rect_width(self, rect: &mut Rect, width: f32) {
         match self {
             Self::Left => rect.max.x = rect.min.x + width,
             Self::Right => rect.min.x = rect.max.x - width,
         }
     }
 
-    fn side_x(self, rect: Rect) -> f32 {
+    pub fn side_x(self, rect: Rect) -> f32 {
         match self {
             Self::Left => rect.left(),
             Self::Right => rect.right(),
@@ -538,21 +538,21 @@ pub enum TopBottomSide {
 }
 
 impl TopBottomSide {
-    fn opposite(self) -> Self {
+    pub fn opposite(self) -> Self {
         match self {
             Self::Top => Self::Bottom,
             Self::Bottom => Self::Top,
         }
     }
 
-    fn set_rect_height(self, rect: &mut Rect, height: f32) {
+    pub fn set_rect_height(self, rect: &mut Rect, height: f32) {
         match self {
             Self::Top => rect.max.y = rect.min.y + height,
             Self::Bottom => rect.min.y = rect.max.y - height,
         }
     }
 
-    fn side_y(self, rect: Rect) -> f32 {
+    pub fn side_y(self, rect: Rect) -> f32 {
         match self {
             Self::Top => rect.top(),
             Self::Bottom => rect.bottom(),

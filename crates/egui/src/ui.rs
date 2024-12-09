@@ -1318,7 +1318,8 @@ impl Ui {
         self.placer.cursor()
     }
 
-    pub(crate) fn set_cursor(&mut self, cursor: Rect) {
+    /// Sets where the next widget will be put.
+    pub fn set_cursor(&mut self, cursor: Rect) {
         self.placer.set_cursor(cursor);
     }
 

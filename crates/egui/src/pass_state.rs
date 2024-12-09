@@ -302,7 +302,7 @@ impl PassState {
     }
 
     /// Shrink `available_rect`.
-    pub(crate) fn allocate_left_panel(&mut self, panel_rect: Rect) {
+    pub fn allocate_left_panel(&mut self, panel_rect: Rect) {
         debug_assert!(
             panel_rect.min.distance(self.available_rect.min) < 0.1,
             "Mismatching left panel. You must not create a panel from within another panel."
@@ -313,7 +313,7 @@ impl PassState {
     }
 
     /// Shrink `available_rect`.
-    pub(crate) fn allocate_right_panel(&mut self, panel_rect: Rect) {
+    pub fn allocate_right_panel(&mut self, panel_rect: Rect) {
         debug_assert!(
             panel_rect.max.distance(self.available_rect.max) < 0.1,
             "Mismatching right panel. You must not create a panel from within another panel."
@@ -324,7 +324,7 @@ impl PassState {
     }
 
     /// Shrink `available_rect`.
-    pub(crate) fn allocate_top_panel(&mut self, panel_rect: Rect) {
+    pub fn allocate_top_panel(&mut self, panel_rect: Rect) {
         debug_assert!(
             panel_rect.min.distance(self.available_rect.min) < 0.1,
             "Mismatching top panel. You must not create a panel from within another panel."
@@ -335,7 +335,7 @@ impl PassState {
     }
 
     /// Shrink `available_rect`.
-    pub(crate) fn allocate_bottom_panel(&mut self, panel_rect: Rect) {
+    pub fn allocate_bottom_panel(&mut self, panel_rect: Rect) {
         debug_assert!(
             panel_rect.max.distance(self.available_rect.max) < 0.1,
             "Mismatching bottom panel. You must not create a panel from within another panel."
@@ -345,7 +345,7 @@ impl PassState {
         self.used_by_panels = self.used_by_panels.union(panel_rect);
     }
 
-    pub(crate) fn allocate_central_panel(&mut self, panel_rect: Rect) {
+    pub fn allocate_central_panel(&mut self, panel_rect: Rect) {
         // Note: we do not shrink `available_rect`, because
         // we allow windows to cover the CentralPanel.
         self.unused_rect = Rect::NOTHING; // Nothing left unused after this
