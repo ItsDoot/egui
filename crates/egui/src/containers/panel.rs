@@ -16,8 +16,9 @@
 //! Add your [`crate::Window`]:s after any top-level panels.
 
 use crate::{
-    lerp, vec2, Align, Context, CursorIcon, Frame, Id, InnerResponse, LayerId, Layout, NumExt,
-    Rangef, Rect, Sense, Stroke, Ui, UiBuilder, UiKind, UiStackInfo, Vec2,
+    frame::Prepared, lerp, vec2, Align, Context, CursorIcon, Frame, Id, InnerResponse, LayerId,
+    Layout, NumExt, Rangef, Rect, Response, Sense, Stroke, Ui, UiBuilder, UiKind, UiStackInfo,
+    Vec2,
 };
 
 fn animate_expansion(ctx: &Context, id: Id, is_expanded: bool) -> f32 {
@@ -1072,12 +1073,45 @@ pub struct CentralPanel {
     frame: Option<Frame>,
 }
 
+/// A [`CentralPanel`] that has begun inside a [`Ui`] and is ready to have
+/// contents added to it.
+pub struct PreparedCentralPanelInside {
+    prepared: Prepared,
+}
+
+/// A [`CentralPanel`] that has begun at the top level and is ready to have
+/// contents added to it.
+pub struct PreparedCentralPanel {
+    root_ui: Ui,
+    prepared: PreparedCentralPanelInside,
+}
+
 impl CentralPanel {
     /// Change the background color, margins, etc.
     #[inline]
     pub fn frame(mut self, frame: Frame) -> Self {
         self.frame = Some(frame);
         self
+    }
+}
+
+impl PreparedCentralPanelInside {
+    pub fn content_ui(&self) -> &Ui {
+        &self.prepared.content_ui
+    }
+
+    pub fn content_ui_mut(&mut self) -> &mut Ui {
+        &mut self.prepared.content_ui
+    }
+}
+
+impl PreparedCentralPanel {
+    pub fn content_ui(&self) -> &Ui {
+        self.prepared.content_ui()
+    }
+
+    pub fn content_ui_mut(&mut self) -> &mut Ui {
+        self.prepared.content_ui_mut()
     }
 }
 
@@ -1097,6 +1131,14 @@ impl CentralPanel {
         ui: &mut Ui,
         add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
     ) -> InnerResponse<R> {
+        let mut prepared = self.begin_inside(ui);
+        let inner = add_contents(prepared.content_ui_mut());
+        let response = prepared.end_inside(ui);
+        InnerResponse::new(inner, response)
+    }
+
+    /// Begins the panel inside a [`Ui`].
+    pub fn begin_inside(self, ui: &mut Ui) -> PreparedCentralPanelInside {
         let Self { frame } = self;
 
         let panel_rect = ui.available_rect_before_wrap();
@@ -1109,12 +1151,23 @@ impl CentralPanel {
         panel_ui.set_clip_rect(panel_rect); // If we overflow, don't do so visibly (#4475)
 
         let frame = frame.unwrap_or_else(|| Frame::central_panel(ui.style()));
-        frame.show(&mut panel_ui, |ui| {
-            ui.expand_to_include_rect(ui.max_rect()); // Expand frame to include it all
-            add_contents(ui)
-        })
-    }
+        let mut prepared = frame.begin(&mut panel_ui);
+        prepared
+            .content_ui
+            .expand_to_include_rect(prepared.content_ui.max_rect());
 
+        PreparedCentralPanelInside { prepared }
+    }
+}
+
+impl PreparedCentralPanelInside {
+    /// Ends the panel inside a [`Ui`].
+    pub fn end_inside(self, ui: &mut Ui) -> Response {
+        self.prepared.end(ui)
+    }
+}
+
+impl CentralPanel {
     /// Show the panel at the top level.
     pub fn show<R>(
         self,
@@ -1130,6 +1183,14 @@ impl CentralPanel {
         ctx: &Context,
         add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
     ) -> InnerResponse<R> {
+        let mut prepared = self.begin(ctx);
+        let inner = add_contents(prepared.content_ui_mut());
+        let response = prepared.end();
+        InnerResponse::new(inner, response)
+    }
+
+    /// Begins the panel at the top level.
+    pub fn begin(self, ctx: &Context) -> PreparedCentralPanel {
         let available_rect = ctx.available_rect();
         let layer_id = LayerId::background();
         let id = Id::new((ctx.viewport_id(), "central_panel"));
@@ -1142,12 +1203,22 @@ impl CentralPanel {
         );
         panel_ui.set_clip_rect(ctx.screen_rect());
 
-        let inner_response = self.show_inside_dyn(&mut panel_ui, add_contents);
+        PreparedCentralPanel {
+            prepared: self.begin_inside(&mut panel_ui),
+            root_ui: panel_ui,
+        }
+    }
+}
 
+impl PreparedCentralPanel {
+    /// Ends the panel at the top level.
+    pub fn end(mut self) -> Response {
+        let response = self.prepared.end_inside(&mut self.root_ui);
         // Only inform ctx about what we actually used, so we can shrink the native window to fit.
-        ctx.pass_state_mut(|state| state.allocate_central_panel(inner_response.response.rect));
-
-        inner_response
+        self.root_ui
+            .ctx()
+            .pass_state_mut(|state| state.allocate_central_panel(response.rect));
+        response
     }
 }
 
