@@ -590,6 +590,30 @@ pub struct TopBottomPanel {
     height_range: Rangef,
 }
 
+/// A [`TopBottomPanel`] that has begun inside a [`Ui`] and is ready to have
+/// contents added to it.
+pub struct PreparedTopBottomPanelInside {
+    side: TopBottomSide,
+    id: Id,
+    resizable: bool,
+    show_separator_line: bool,
+    height: f32,
+    height_range: Rangef,
+    prepared: Prepared,
+    panel_rect: Rect,
+    resize_id: Id,
+    resize_hover: bool,
+    is_resizing: bool,
+}
+
+/// A [`TopBottomPanel`] that has begun at the top level and is ready to have
+/// contents added to it.
+pub struct PreparedTopBottomPanel {
+    root_ui: Ui,
+    available_rect: Rect,
+    prepared: PreparedTopBottomPanelInside,
+}
+
 impl TopBottomPanel {
     /// The id should be globally unique, e.g. `Id::new("my_top_panel")`.
     pub fn top(id: impl Into<Id>) -> Self {
@@ -693,6 +717,26 @@ impl TopBottomPanel {
     }
 }
 
+impl PreparedTopBottomPanelInside {
+    pub fn content_ui(&self) -> &Ui {
+        &self.prepared.content_ui
+    }
+
+    pub fn content_ui_mut(&mut self) -> &mut Ui {
+        &mut self.prepared.content_ui
+    }
+}
+
+impl PreparedTopBottomPanel {
+    pub fn content_ui(&self) -> &Ui {
+        self.prepared.content_ui()
+    }
+
+    pub fn content_ui_mut(&mut self) -> &mut Ui {
+        self.prepared.content_ui_mut()
+    }
+}
+
 impl TopBottomPanel {
     /// Show the panel inside a [`Ui`].
     pub fn show_inside<R>(
@@ -709,6 +753,14 @@ impl TopBottomPanel {
         ui: &mut Ui,
         add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
     ) -> InnerResponse<R> {
+        let mut prepared = self.begin_inside(ui);
+        let inner = add_contents(prepared.content_ui_mut());
+        let response = prepared.end_inside(ui);
+        InnerResponse::new(inner, response)
+    }
+
+    /// Begins the panel inside a [`Ui`].
+    pub fn begin_inside(self, ui: &mut Ui) -> PreparedTopBottomPanelInside {
         let Self {
             side,
             id,
@@ -770,13 +822,50 @@ impl TopBottomPanel {
         panel_ui.expand_to_include_rect(panel_rect);
         panel_ui.set_clip_rect(panel_rect); // If we overflow, don't do so visibly (#4475)
 
-        let inner_response = frame.show(&mut panel_ui, |ui| {
-            ui.set_min_width(ui.max_rect().width()); // Make the frame fill full width
-            ui.set_min_height((height_range.min - frame.inner_margin.sum().y).at_least(0.0));
-            add_contents(ui)
-        });
+        let mut prepared = frame.begin(&mut panel_ui);
+        prepared
+            .content_ui
+            .set_min_width(prepared.content_ui.max_rect().width()); // Make the frame fill full width
+        prepared
+            .content_ui
+            .set_min_height((height_range.min - frame.inner_margin.sum().y).at_least(0.0));
 
-        let rect = inner_response.response.rect;
+        PreparedTopBottomPanelInside {
+            side,
+            id,
+            resizable,
+            show_separator_line,
+            height,
+            height_range,
+            prepared,
+            panel_rect,
+            resize_id,
+            resize_hover,
+            is_resizing,
+        }
+    }
+}
+
+impl PreparedTopBottomPanelInside {
+    /// Ends the panel inside a [`Ui`].
+    pub fn end_inside(self, ui: &mut Ui) -> Response {
+        let Self {
+            side,
+            id,
+            resizable,
+            show_separator_line,
+            height,
+            height_range,
+            prepared,
+            panel_rect,
+            resize_id,
+            mut resize_hover,
+            mut is_resizing,
+        } = self;
+
+        let response = prepared.end(ui);
+
+        let rect = response.rect;
 
         {
             let mut cursor = ui.cursor();
@@ -847,9 +936,11 @@ impl TopBottomPanel {
             ui.painter().hline(panel_rect.x_range(), resize_y, stroke);
         }
 
-        inner_response
+        response
     }
+}
 
+impl TopBottomPanel {
     /// Show the panel at the top level.
     pub fn show<R>(
         self,
@@ -865,9 +956,16 @@ impl TopBottomPanel {
         ctx: &Context,
         add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
     ) -> InnerResponse<R> {
+        let mut prepared = self.begin(ctx);
+        let inner = add_contents(prepared.content_ui_mut());
+        let response = prepared.end();
+        InnerResponse::new(inner, response)
+    }
+
+    /// Begins the panel at the top level.
+    pub fn begin(self, ctx: &Context) -> PreparedTopBottomPanel {
         let layer_id = LayerId::background();
         let available_rect = ctx.available_rect();
-        let side = self.side;
 
         let mut panel_ui = Ui::new(
             ctx.clone(),
@@ -876,26 +974,45 @@ impl TopBottomPanel {
             UiBuilder::new().max_rect(available_rect),
         );
         panel_ui.set_clip_rect(ctx.screen_rect());
+        PreparedTopBottomPanel {
+            prepared: self.begin_inside(&mut panel_ui),
+            root_ui: panel_ui,
+            available_rect,
+        }
+    }
+}
 
-        let inner_response = self.show_inside_dyn(&mut panel_ui, add_contents);
-        let rect = inner_response.response.rect;
+impl PreparedTopBottomPanel {
+    /// Ends the panel at the top level.
+    pub fn end(self) -> Response {
+        let Self {
+            mut root_ui,
+            available_rect,
+            prepared,
+        } = self;
+
+        let side = prepared.side;
+        let response = prepared.end_inside(&mut root_ui);
+        let rect = response.rect;
 
         match side {
             TopBottomSide::Top => {
-                ctx.pass_state_mut(|state| {
+                root_ui.ctx().pass_state_mut(|state| {
                     state.allocate_top_panel(Rect::from_min_max(available_rect.min, rect.max));
                 });
             }
             TopBottomSide::Bottom => {
-                ctx.pass_state_mut(|state| {
+                root_ui.ctx().pass_state_mut(|state| {
                     state.allocate_bottom_panel(Rect::from_min_max(rect.min, available_rect.max));
                 });
             }
         }
 
-        inner_response
+        response
     }
+}
 
+impl TopBottomPanel {
     /// Show the panel if `is_expanded` is `true`,
     /// otherwise don't show it, but with a nice animation between collapsed and expanded.
     pub fn show_animated<R>(
