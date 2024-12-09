@@ -108,6 +108,30 @@ pub struct SidePanel {
     width_range: Rangef,
 }
 
+/// A [`SidePanel`] that has begun inside a [`Ui`] and is ready to have
+/// contents added to it.
+pub struct PreparedSidePanelInside {
+    side: Side,
+    id: Id,
+    resizable: bool,
+    show_separator_line: bool,
+    width: f32,
+    width_range: Rangef,
+    prepared: Prepared,
+    panel_rect: Rect,
+    resize_id: Id,
+    resize_hover: bool,
+    is_resizing: bool,
+}
+
+/// A [`SidePanel`] that has begun at the top level and is ready to have
+/// contents added to it.
+pub struct PreparedSidePanel {
+    root_ui: Ui,
+    available_rect: Rect,
+    prepared: PreparedSidePanelInside,
+}
+
 impl SidePanel {
     /// The id should be globally unique, e.g. `Id::new("my_left_panel")`.
     pub fn left(id: impl Into<Id>) -> Self {
@@ -208,6 +232,26 @@ impl SidePanel {
     }
 }
 
+impl PreparedSidePanelInside {
+    pub fn content_ui(&self) -> &Ui {
+        &self.prepared.content_ui
+    }
+
+    pub fn content_ui_mut(&mut self) -> &mut Ui {
+        &mut self.prepared.content_ui
+    }
+}
+
+impl PreparedSidePanel {
+    pub fn content_ui(&self) -> &Ui {
+        self.prepared.content_ui()
+    }
+
+    pub fn content_ui_mut(&mut self) -> &mut Ui {
+        self.prepared.content_ui_mut()
+    }
+}
+
 impl SidePanel {
     /// Show the panel inside a [`Ui`].
     pub fn show_inside<R>(
@@ -224,6 +268,14 @@ impl SidePanel {
         ui: &mut Ui,
         add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
     ) -> InnerResponse<R> {
+        let mut prepared = self.begin_inside(ui);
+        let inner = add_contents(prepared.content_ui_mut());
+        let response = prepared.end_inside(ui);
+        InnerResponse::new(inner, response)
+    }
+
+    /// Begins the panel inside a [`Ui`].
+    pub fn begin_inside(self, ui: &mut Ui) -> PreparedSidePanelInside {
         let Self {
             side,
             id,
@@ -279,13 +331,49 @@ impl SidePanel {
         panel_ui.set_clip_rect(panel_rect); // If we overflow, don't do so visibly (#4475)
 
         let frame = frame.unwrap_or_else(|| Frame::side_top_panel(ui.style()));
-        let inner_response = frame.show(&mut panel_ui, |ui| {
-            ui.set_min_height(ui.max_rect().height()); // Make sure the frame fills the full height
-            ui.set_min_width((width_range.min - frame.inner_margin.sum().x).at_least(0.0));
-            add_contents(ui)
-        });
+        let mut prepared = frame.begin(&mut panel_ui);
+        prepared
+            .content_ui
+            .set_min_height(prepared.content_ui.max_rect().height()); // Make the frame fill full height
+        prepared
+            .content_ui
+            .set_min_width((width_range.min - frame.inner_margin.sum().x).at_least(0.0));
 
-        let rect = inner_response.response.rect;
+        PreparedSidePanelInside {
+            side,
+            id,
+            resizable,
+            show_separator_line,
+            width,
+            width_range,
+            prepared,
+            panel_rect,
+            resize_id,
+            resize_hover,
+            is_resizing,
+        }
+    }
+}
+
+impl PreparedSidePanelInside {
+    /// Ends the panel inside a [`Ui`].
+    pub fn end_inside(self, ui: &mut Ui) -> Response {
+        let Self {
+            side,
+            id,
+            resizable,
+            show_separator_line,
+            width,
+            width_range,
+            prepared,
+            panel_rect,
+            resize_id,
+            mut resize_hover,
+            mut is_resizing,
+        } = self;
+
+        let response = prepared.end(ui);
+        let rect = response.rect;
 
         {
             let mut cursor = ui.cursor();
@@ -355,9 +443,11 @@ impl SidePanel {
             ui.painter().vline(resize_x, panel_rect.y_range(), stroke);
         }
 
-        inner_response
+        response
     }
+}
 
+impl SidePanel {
     /// Show the panel at the top level.
     pub fn show<R>(
         self,
@@ -373,8 +463,15 @@ impl SidePanel {
         ctx: &Context,
         add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
     ) -> InnerResponse<R> {
+        let mut prepared = self.begin(ctx);
+        let inner = add_contents(prepared.content_ui_mut());
+        let response = prepared.end();
+        InnerResponse::new(inner, response)
+    }
+
+    /// Begins the panel at the top level.
+    pub fn begin(self, ctx: &Context) -> PreparedSidePanel {
         let layer_id = LayerId::background();
-        let side = self.side;
         let available_rect = ctx.available_rect();
         let mut panel_ui = Ui::new(
             ctx.clone(),
@@ -384,8 +481,22 @@ impl SidePanel {
         );
         panel_ui.set_clip_rect(ctx.screen_rect());
 
-        let inner_response = self.show_inside_dyn(&mut panel_ui, add_contents);
-        let rect = inner_response.response.rect;
+        PreparedSidePanel {
+            prepared: self.begin_inside(&mut panel_ui),
+            root_ui: panel_ui,
+            available_rect,
+        }
+    }
+}
+
+impl PreparedSidePanel {
+    /// Ends the panel at the top level.
+    pub fn end(mut self) -> Response {
+        let side = self.prepared.side;
+        let response = self.prepared.end_inside(&mut self.root_ui);
+        let rect = response.rect;
+        let available_rect = self.available_rect;
+        let ctx = self.root_ui.ctx();
 
         match side {
             Side::Left => ctx.pass_state_mut(|state| {
@@ -395,9 +506,11 @@ impl SidePanel {
                 state.allocate_right_panel(Rect::from_min_max(rect.min, available_rect.max));
             }),
         }
-        inner_response
+        response
     }
+}
 
+impl SidePanel {
     /// Show the panel if `is_expanded` is `true`,
     /// otherwise don't show it, but with a nice animation between collapsed and expanded.
     pub fn show_animated<R>(
